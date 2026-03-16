@@ -1,0 +1,263 @@
+const STORAGE_KEY = "spendwise_expenses";
+const BUDGET_KEY = "spendwise_budgets";
+ 
+const CATEGORY_COLORS = {
+  food: "#f97316",
+  transport: "#60a5fa",
+  education: "#a78bfa",
+  entertainment: "#f472b6",
+  health: "#4ade80",
+  shopping: "#fbbf24",
+  other: "#94a3b8",
+};
+ 
+let currentMonth = getMonthKey(new Date()); // "2024-03"
+let activeFilter = "all";
+ 
+function loadExpenses() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+ 
+function saveExpenses(expenses) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(expenses));
+}
+ 
+function loadBudgets() {
+  try {
+    return JSON.parse(localStorage.getItem(BUDGET_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+ 
+function saveBudgets(budgets) {
+  localStorage.setItem(BUDGET_KEY, JSON.stringify(budgets));
+}
+
+ 
+function getMonthKey(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+ 
+function formatMonthLabel(monthKey) {
+  const [year, month] = monthKey.split("-");
+  const d = new Date(year, month - 1, 1);
+  return d.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+}
+ 
+function shiftMonth(monthKey, delta) {
+  const [year, month] = monthKey.split("-").map(Number);
+  const d = new Date(year, month - 1 + delta, 1);
+  return getMonthKey(d);
+}
+ 
+function formatDate(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+  });
+}
+ 
+function addExpense({ title, amount, category, date }) {
+  const expenses = loadExpenses();
+  expenses.push({
+    id: Date.now().toString(), 
+    title,
+    amount,
+    category,
+    date,
+    createdAt: new Date().toISOString(),
+  });
+  saveExpenses(expenses);
+}
+ 
+function deleteExpense(id) {
+  const expenses = loadExpenses().filter((e) => e.id !== id);
+  saveExpenses(expenses);
+}
+ 
+function getMonthlyExpenses(monthKey) {
+  return loadExpenses().filter((e) => e.date.startsWith(monthKey));
+}
+ 
+function getTotalSpent(expenses) {
+  return expenses.reduce((sum, e) => sum + e.amount, 0);
+}
+ 
+function getBudgetForMonth(monthKey) {
+  return loadBudgets()[monthKey] || null;
+}
+ 
+function setBudgetForMonth(monthKey, amount) {
+  const budgets = loadBudgets();
+  budgets[monthKey] = amount;
+  saveBudgets(budgets);
+}
+ 
+// ── Rendering 
+function render() {
+  let expenses = getMonthlyExpenses(currentMonth);
+
+  document.getElementById("month-label").textContent =
+    formatMonthLabel(currentMonth);
+ 
+  const total = getTotalSpent(expenses);
+  const budget = getBudgetForMonth(currentMonth);
+ 
+  document.getElementById("stat-spent").textContent = `₹${total.toLocaleString("en-IN")}`;
+ 
+  const remainingEl = document.getElementById("stat-remaining");
+  const fillEl = document.getElementById("budget-fill");
+ 
+  if (budget) {
+    const remaining = budget - total;
+    const pct = Math.min((total / budget) * 100, 100);
+ 
+    remainingEl.textContent = `₹${Math.abs(remaining).toLocaleString("en-IN")}`;
+    remainingEl.className = "card-value " + (remaining < 0 ? "danger" : "good");
+ 
+    fillEl.style.width = `${pct}%`;
+    fillEl.className = "budget-fill" + (pct >= 100 ? " over" : "");
+ 
+    document.getElementById("budget-input").value = budget;
+  } else {
+    remainingEl.textContent = "—";
+    remainingEl.className = "card-value";
+    fillEl.style.width = "0%";
+  }
+ 
+  const filtered =
+    activeFilter === "all"
+      ? expenses
+      : expenses.filter((e) => e.category === activeFilter);
+ 
+  filtered.sort((a, b) => (a.date < b.date ? 1 : -1));
+ 
+  const listEl = document.getElementById("expense-list");
+  const countEl = document.getElementById("list-count");
+ 
+  countEl.textContent = `${filtered.length} expense${filtered.length !== 1 ? "s" : ""}`;
+ 
+  if (filtered.length === 0) {
+    listEl.innerHTML = `<div class="empty-state">nothing here yet — go spend something</div>`;
+    return;
+  }
+ 
+  listEl.innerHTML = filtered
+    .map(
+      (e) => `
+      <div class="expense-item" data-id="${e.id}">
+        <div class="category-dot" style="background:${CATEGORY_COLORS[e.category] || "#94a3b8"}"></div>
+        <div class="expense-info">
+          <div class="expense-title">${escapeHTML(e.title)}</div>
+          <div class="expense-meta">${e.category} · ${formatDate(e.date)}</div>
+        </div>
+        <div class="expense-amount">−₹${e.amount.toLocaleString("en-IN")}</div>
+        <button class="btn-delete" data-id="${e.id}" title="Delete">×</button>
+      </div>`
+    )
+    .join("");
+}
+
+function escapeHTML(str) {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+ 
+let toastTimer;
+function showToast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 2200);
+}
+ 
+// ── Event wiring 
+document.getElementById("form-toggle").addEventListener("click", () => {
+  const toggle = document.getElementById("form-toggle");
+  const body = document.getElementById("form-body");
+  toggle.classList.toggle("open");
+  body.classList.toggle("visible");
+});
+ 
+document.getElementById("btn-add").addEventListener("click", () => {
+  const title = document.getElementById("f-title").value.trim();
+  const amount = parseFloat(document.getElementById("f-amount").value);
+  const category = document.getElementById("f-category").value;
+  const date = document.getElementById("f-date").value;
+ 
+  if (!title) return showToast("give it a name");
+  if (!amount || amount <= 0) return showToast("enter a valid amount");
+  if (!date) return showToast("pick a date");
+ 
+  addExpense({ title, amount, category, date });
+  render();
+  showToast("added ✓");
+ 
+  // reset form fields but keep form open
+  document.getElementById("f-title").value = "";
+  document.getElementById("f-amount").value = "";
+  document.getElementById("f-title").focus();
+});
+ 
+// delete via event delegation
+document.getElementById("expense-list").addEventListener("click", (e) => {
+  const btn = e.target.closest(".btn-delete");
+  if (!btn) return;
+  deleteExpense(btn.dataset.id);
+  render();
+  showToast("removed");
+});
+ 
+// month navigation
+document.getElementById("prev-month").addEventListener("click", () => {
+  currentMonth = shiftMonth(currentMonth, -1);
+  render();
+});
+ 
+document.getElementById("next-month").addEventListener("click", () => {
+  currentMonth = shiftMonth(currentMonth, +1);
+  render();
+});
+ 
+document.getElementById("filter-tabs").addEventListener("click", (e) => {
+  const tab = e.target.closest(".tab");
+  if (!tab) return;
+ 
+  activeFilter = tab.dataset.cat;
+ 
+  document.querySelectorAll(".tab").forEach((t) =>
+    t.classList.toggle("active", t === tab)
+  );
+  render();
+});
+ 
+// budget
+document.getElementById("btn-save-budget").addEventListener("click", () => {
+  const val = parseFloat(document.getElementById("budget-input").value);
+  if (!val || val <= 0) return showToast("enter a valid budget");
+  setBudgetForMonth(currentMonth, val);
+  render();
+  showToast("budget saved ✓");
+});
+ 
+document.getElementById("budget-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("btn-save-budget").click();
+});
+ 
+document.getElementById("f-date").valueAsDate = new Date();
+ 
+render();
+ 
